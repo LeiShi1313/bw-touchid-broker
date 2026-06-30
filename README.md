@@ -169,9 +169,11 @@ Passkey/WebAuthn two-step login is not a Touch ID unlock for `bw`. The broker's 
 
 ## Catalog
 
-`~/.bw-broker/catalog.json` stores aliases, `bw` item IDs, allowed fields, TTLs, and client policy. It does not store password values.
+`~/.bw-broker/catalog.json` stores aliases, `bw` item IDs, allowed fields, TTLs, login URLs, and client policy. It does not store password values.
 
 `build-catalog` unlocks the dedicated agent account, reads items available to that account, and generates aliases from item names. Put only automation-safe items in the Vaultwarden collection visible to the agent account before building the catalog.
+
+`/v1/catalog` exposes each entry's `login_urls` as non-secret selection metadata, so a remote agent can choose the right item for a site before requesting allowed fields.
 
 If the agent account can see more than one collection, narrow catalog generation:
 

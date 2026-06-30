@@ -84,6 +84,7 @@ pub fn build_catalog(
         let metadata = json!({
             "organization_id": item.get("organizationId").cloned().unwrap_or(Value::Null),
             "collection_ids": item.get("collectionIds").cloned().unwrap_or_else(|| json!([])),
+            "login_urls": login_urls(item),
         });
         secrets.insert(
             alias,
@@ -119,6 +120,7 @@ pub fn visible_catalog(catalog: &Catalog, client: &ClientConfig) -> Value {
             "id": id,
             "kind": entry.kind,
             "description": entry.description,
+            "login_urls": entry.metadata.get("login_urls").cloned().unwrap_or_else(|| json!([])),
             "return_fields": entry.return_fields,
             "approval_required": entry.approval_required && !client.approval.is_trusted(),
             "ttl_seconds": entry.ttl_seconds,
@@ -189,6 +191,20 @@ fn custom_field_value(item: &Value, name: &str) -> Value {
             })
         })
         .unwrap_or(Value::Null)
+}
+
+fn login_urls(item: &Value) -> Vec<String> {
+    item.get("login")
+        .and_then(|login| login.get("uris"))
+        .and_then(Value::as_array)
+        .map(|uris| {
+            uris.iter()
+                .filter_map(|uri| uri.get("uri").and_then(Value::as_str))
+                .filter(|uri| !uri.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn infer_return_fields(item: &Value) -> Vec<String> {
@@ -275,6 +291,7 @@ fn entry_allows_client(entry: &CatalogEntry, client_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ClientApprovalMode, ClientConfig};
     use serde_json::json;
 
     #[test]
@@ -301,6 +318,7 @@ mod tests {
             entry.return_fields,
             vec!["username", "password", "uris", "custom.scope"]
         );
+        assert_eq!(entry.metadata["login_urls"], json!(["https://github.com"]));
         let extracted = extract_fields(&item, &entry.return_fields);
         assert_eq!(extracted.get("username").unwrap(), "bot");
         assert_eq!(extracted.get("password").unwrap(), "secret");
@@ -309,5 +327,19 @@ mod tests {
             &json!(["https://github.com"])
         );
         assert_eq!(extracted.get("custom.scope").unwrap(), "read");
+
+        let visible = visible_catalog(
+            &catalog,
+            &ClientConfig {
+                id: "agent-a".to_string(),
+                secret: "client-secret".to_string(),
+                approval: ClientApprovalMode::Prompt,
+                allowed_secrets: vec!["*".to_string()],
+            },
+        );
+        assert_eq!(
+            visible["secrets"][0]["login_urls"],
+            json!(["https://github.com"])
+        );
     }
 }

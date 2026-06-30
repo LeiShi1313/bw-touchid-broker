@@ -17,7 +17,7 @@ The broker is a narrow, approval-gated secret API. Never ask the user for a Vaul
 
 2. Catalog first.
 
-   Send a signed `GET /v1/catalog` request before requesting any secret. Use only `secret_id` values and fields returned by the catalog. Do not infer, guess, or invent secret names.
+   Send a signed `GET /v1/catalog` request before requesting any secret. Use only `secret_id` values and fields returned by the catalog. Use `login_urls` when present to choose the matching login item. Do not infer, guess, or invent secret names.
 
    Completion criterion: the chosen `secret_id` and requested fields are present in the catalog.
 

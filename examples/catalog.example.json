@@ -9,6 +9,7 @@
       "kind": "login",
       "metadata": {
         "collection_ids": [],
+        "login_urls": ["https://github.com"],
         "organization_id": null
       },
       "return_fields": ["username", "password"],

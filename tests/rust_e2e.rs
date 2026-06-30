@@ -245,6 +245,10 @@ async fn build_catalog_uses_stored_master_password_and_lists_items() {
     );
     assert_eq!(entry["metadata"]["organization_id"], "org-1");
     assert_eq!(entry["metadata"]["collection_ids"], json!(["collection-1"]));
+    assert_eq!(
+        entry["metadata"]["login_urls"],
+        json!(["https://github.com"])
+    );
     let calls = fs::read_to_string(fixture.call_log()).unwrap();
     assert!(calls.contains("--nointeraction --session session-123 list items --collectionid collection-1 --organizationid org-1|"));
 }
