@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use rand::RngCore;
@@ -227,6 +227,22 @@ pub fn load_config(home: &Path) -> Result<Config> {
 
 pub fn save_config(home: &Path, config: &Config) -> Result<()> {
     write_private_json(&config_path(home), config)
+}
+
+pub fn set_client_approval(
+    home: &Path,
+    client_id: &str,
+    approval: ClientApprovalMode,
+) -> Result<()> {
+    let mut config = load_config(home)?;
+    let client = config
+        .signing
+        .clients
+        .iter_mut()
+        .find(|client| client.id == client_id)
+        .ok_or_else(|| anyhow!("unknown client id: {client_id}"))?;
+    client.approval = approval;
+    save_config(home, &config)
 }
 
 pub fn write_private_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<()> {

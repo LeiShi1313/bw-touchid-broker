@@ -11,11 +11,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Once;
 
-use crate::approval::confirm_request;
+use crate::approval::{confirm_request, ApprovalDecision};
 use crate::audit::write_audit;
 use crate::bw::BitwardenCli;
 use crate::catalog::{extract_fields, load_catalog, require_secret, visible_catalog};
-use crate::config::{expand_path, find_client, load_config, nonce_path, Config};
+use crate::config::{
+    expand_path, find_client, load_config, nonce_path, set_client_approval, ClientApprovalMode,
+    Config,
+};
 use crate::keychain::read_master_password;
 use crate::nonce::NonceStore;
 use crate::signing::{header_str, verify_signature, HEADER_CLIENT};
@@ -132,17 +135,32 @@ async fn secret_request(
     };
 
     if entry.approval_required && !client.approval.is_trusted() {
-        if let Err(err) = confirm_request(&state.config, &client_id, secret_id, purpose, run_id) {
-            let _ = audit_event(
-                &state,
-                "secret_denied",
-                &client_id,
-                secret_id,
-                purpose,
-                run_id,
-                None,
-            );
-            return Err(HttpError::new(StatusCode::FORBIDDEN, err.to_string()));
+        match confirm_request(&state.config, &client_id, secret_id, purpose, run_id) {
+            Ok(ApprovalDecision::AllowOnce) => {}
+            Ok(ApprovalDecision::TrustClient) => {
+                set_client_approval(&state.home, &client_id, ClientApprovalMode::Trusted)?;
+                let _ = audit_event(
+                    &state,
+                    "client_trusted",
+                    &client_id,
+                    secret_id,
+                    purpose,
+                    run_id,
+                    None,
+                );
+            }
+            Err(err) => {
+                let _ = audit_event(
+                    &state,
+                    "secret_denied",
+                    &client_id,
+                    secret_id,
+                    purpose,
+                    run_id,
+                    None,
+                );
+                return Err(HttpError::new(StatusCode::FORBIDDEN, err.to_string()));
+            }
         }
     }
 
@@ -202,7 +220,8 @@ fn verify_request(
 ) -> Result<(crate::config::ClientConfig, String), HttpError> {
     let client_id = header_str(headers, HEADER_CLIENT)
         .map_err(|_| HttpError::new(StatusCode::UNAUTHORIZED, "missing client id"))?;
-    let client = find_client(&state.config, client_id)
+    let config = load_config(&state.home)?;
+    let client = find_client(&config, client_id)
         .ok_or_else(|| HttpError::new(StatusCode::UNAUTHORIZED, "unknown client id"))?
         .clone();
     verify_signature(
@@ -211,7 +230,7 @@ fn verify_request(
         target,
         headers,
         body,
-        state.config.signing.max_skew_seconds,
+        config.signing.max_skew_seconds,
     )
     .map_err(|err| HttpError::new(StatusCode::UNAUTHORIZED, err.to_string()))?;
     let nonce = header_str(headers, crate::signing::HEADER_NONCE)

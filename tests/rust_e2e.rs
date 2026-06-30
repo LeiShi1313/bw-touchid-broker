@@ -2,8 +2,8 @@ use bw_touchid_broker::catalog::{save_catalog, Catalog, CatalogEntry};
 use bw_touchid_broker::certs::ensure_self_signed_cert;
 use bw_touchid_broker::cli::run_from;
 use bw_touchid_broker::config::{
-    save_config, ApprovalConfig, AuditConfig, BitwardenConfig, ClientApprovalMode, ClientConfig,
-    Config, KeychainConfig, ServerConfig, SigningConfig,
+    save_config, set_client_approval, ApprovalConfig, AuditConfig, BitwardenConfig,
+    ClientApprovalMode, ClientConfig, Config, KeychainConfig, ServerConfig, SigningConfig,
 };
 use bw_touchid_broker::server::serve_config;
 use bw_touchid_broker::signing::signed_headers_json;
@@ -162,6 +162,52 @@ async fn trusted_client_skips_per_request_approval() {
     assert_eq!(response.status(), StatusCode::OK);
     let payload: Value = response.json().await.unwrap();
     assert_eq!(payload["fields"], json!({"password": "token-value"}));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn running_server_reloads_client_trust_policy_for_catalog() {
+    let fixture = Fixture::new();
+    let port = free_port();
+    let config = fixture.config(port, false);
+    let catalog = Catalog {
+        version: 1,
+        secrets: BTreeMap::from([(
+            "github_token".to_string(),
+            CatalogEntry {
+                item_id: "item-1".to_string(),
+                kind: "login".to_string(),
+                description: "GitHub token".to_string(),
+                return_fields: vec!["password".to_string()],
+                approval_required: true,
+                ttl_seconds: 60,
+                allowed_clients: vec!["remote-agent".to_string()],
+                metadata: json!({}),
+            },
+        )]),
+    };
+    save_config(fixture.home(), &config).unwrap();
+    save_catalog(fixture.home(), &catalog).unwrap();
+
+    let server_home = fixture.home().to_path_buf();
+    let server_config = config.clone();
+    let handle = tokio::spawn(async move {
+        let _ = serve_config(server_home, server_config).await;
+    });
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    wait_for_health(&client, port).await;
+
+    let before = signed_get_catalog(&client, port, "nonce-catalog-before").await;
+    assert_eq!(before["secrets"][0]["approval_required"], json!(true));
+
+    set_client_approval(fixture.home(), "remote-agent", ClientApprovalMode::Trusted).unwrap();
+
+    let after = signed_get_catalog(&client, port, "nonce-catalog-after").await;
+    assert_eq!(after["secrets"][0]["approval_required"], json!(false));
 
     handle.abort();
 }
@@ -587,6 +633,25 @@ fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
+}
+
+async fn signed_get_catalog(client: &reqwest::Client, port: u16, nonce: &str) -> Value {
+    let signed = signed_headers_json(
+        "remote-agent",
+        "client-secret",
+        "GET",
+        "/v1/catalog",
+        &[],
+        nonce,
+    )
+    .unwrap();
+    let mut request = client.get(format!("https://127.0.0.1:{port}/v1/catalog"));
+    for (key, value) in signed.as_object().unwrap() {
+        request = request.header(key, value.as_str().unwrap());
+    }
+    let response = request.send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.unwrap()
 }
 
 async fn wait_for_health(client: &reqwest::Client, port: u16) {

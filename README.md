@@ -91,6 +91,14 @@ Each remote agent is a signing client with its own HMAC secret, allowed secret i
 
 Trust does not expand access. A trusted client still needs a valid HMAC signature, fresh nonce, valid timestamp, catalog permission, and field permission. Use it for a client/runtime you are willing to let request its allowed catalog entries without another click.
 
+When a request needs approval, the approval dialog offers:
+
+- Deny
+- Allow Once
+- Trust Client
+
+Trust Client approves the current request and changes that client to `trusted`, so later allowed requests from the same client skip the approval dialog. The running server reloads client policy for each request, so this takes effect without restarting.
+
 The menu bar app can add a client and shows the generated client secret once. Existing client secrets are not displayed in the app. CLI equivalents:
 
 ```bash

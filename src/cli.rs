@@ -11,7 +11,7 @@ use crate::catalog::{build_catalog, empty_catalog, save_catalog};
 use crate::certs::ensure_self_signed_cert;
 use crate::config::{
     catalog_path, config_path, default_config, default_home, expand_path, generate_client_secret,
-    load_config, save_config, ClientApprovalMode, ClientConfig,
+    load_config, save_config, set_client_approval, ClientApprovalMode, ClientConfig,
 };
 use crate::keychain::{
     build_helper, delete_master_password, has_master_password, read_master_password, self_test,
@@ -278,10 +278,10 @@ pub async fn run_with_args(args: Args) -> Result<()> {
             trusted,
         } => add_client(&home, &client_id, allowed_secret, trusted),
         Command::TrustClient { client_id } => {
-            set_client_approval(&home, &client_id, ClientApprovalMode::Trusted)
+            set_client_approval_command(&home, &client_id, ClientApprovalMode::Trusted)
         }
         Command::UntrustClient { client_id } => {
-            set_client_approval(&home, &client_id, ClientApprovalMode::Prompt)
+            set_client_approval_command(&home, &client_id, ClientApprovalMode::Prompt)
         }
         Command::SignRequest {
             client_id,
@@ -575,20 +575,12 @@ fn add_client(
     Ok(())
 }
 
-fn set_client_approval(
+fn set_client_approval_command(
     home: &std::path::Path,
     client_id: &str,
     approval: ClientApprovalMode,
 ) -> Result<()> {
-    let mut config = load_config(home)?;
-    let client = config
-        .signing
-        .clients
-        .iter_mut()
-        .find(|client| client.id == client_id)
-        .ok_or_else(|| anyhow!("unknown client id: {client_id}"))?;
-    client.approval = approval;
-    save_config(home, &config)?;
+    set_client_approval(home, client_id, approval)?;
     println!("Updated client approval mode: {client_id}");
     Ok(())
 }
