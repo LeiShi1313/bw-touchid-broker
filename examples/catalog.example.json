@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "secrets": {
+    "github_readonly_token": {
+      "allowed_clients": ["remote-agent"],
+      "approval_required": true,
+      "description": "Read-only GitHub token",
+      "item_id": "00000000-0000-0000-0000-000000000000",
+      "kind": "login",
+      "metadata": {
+        "collection_ids": [],
+        "organization_id": null
+      },
+      "return_fields": ["username", "password"],
+      "ttl_seconds": 60
+    }
+  }
+}

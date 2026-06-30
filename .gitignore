@@ -1,0 +1,19 @@
+target/
+.DS_Store
+
+# Local broker state and generated credentials.
+.bw-broker/
+bw-cli/
+catalog.json
+config.toml
+audit.log
+*.log
+*.key
+*.pem
+*.p12
+*.crt
+*.csr
+
+# Local environment files.
+.env
+.env.*

@@ -1,0 +1,4 @@
+interface:
+  display_name: "BW Broker Agent"
+  short_description: "Request scoped secrets from a signed local bw broker."
+  default_prompt: "Use the BW broker catalog, sign requests, and request only the specific secret needed for the current task."

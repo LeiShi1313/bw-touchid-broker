@@ -1,0 +1,29 @@
+[package]
+name = "bw-touchid-broker"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bw-broker"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+hmac = "0.12"
+http = "1"
+rand = "0.8"
+rpassword = "7"
+rustls = "0.23"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tempfile = "3"
