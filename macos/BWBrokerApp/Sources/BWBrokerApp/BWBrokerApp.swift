@@ -225,6 +225,17 @@ final class BrokerController: ObservableObject {
         }
     }
 
+    func clientTrustBinding(_ clientID: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                self.clients.first(where: { $0.id == clientID })?.trusted ?? false
+            },
+            set: { trusted in
+                self.setClientTrusted(clientID, trusted: trusted)
+            }
+        )
+    }
+
     func copyNewClientConfig() {
         guard !newClientConfigJSON.isEmpty else {
             lastStatus = "No new client config to copy."
@@ -764,22 +775,38 @@ struct BrokerStatusView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(controller.clients) { client in
-                        HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 6) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(client.id)
                                     .font(.caption)
                                     .textSelection(.enabled)
-                                Text("\(client.trusted ? "trusted" : "prompts") · \(client.allowedSecrets.joined(separator: ", "))")
+                                Text("Allowed: \(client.allowedSecrets.joined(separator: ", "))")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
-                            Spacer()
-                            Button(client.trusted ? "Require Approval" : "Trust") {
-                                controller.setClientTrusted(client.id, trusted: !client.trusted)
+
+                            HStack {
+                                Label(
+                                    client.trusted ? "Approval: Trusted" : "Approval: Prompt",
+                                    systemImage: client.trusted ? "checkmark.shield.fill" : "hand.raised.fill"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(client.trusted ? .green : .orange)
+
+                                Spacer()
+
+                                Picker("Approval", selection: controller.clientTrustBinding(client.id)) {
+                                    Text("Prompt").tag(false)
+                                    Text("Trusted").tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .frame(width: 170)
                             }
                         }
+                        .padding(.vertical, 4)
                     }
                 }
 
