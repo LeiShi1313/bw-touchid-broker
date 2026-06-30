@@ -70,13 +70,17 @@ The first app version assumes the broker has already been initialized:
 ./target/release/bw-broker login --method 0 --code <current-code>
 ```
 
-After that, use the menu bar app to start/stop the broker and rebuild the catalog. The Network section edits the broker bind host, port, and public URL:
+After that, open the menu bar app. It starts the broker automatically by default and keeps `bw-broker serve` as its child process. Use the Start at Launch toggle if you want to disable automatic serving.
+
+The Network section edits the broker bind host, port, and public URL:
 
 - Bind host is where the broker listens, such as `127.0.0.1`, a Tailscale IP, or `0.0.0.0`.
 - Public URL is what the remote agent calls, such as `https://100.x.y.z:27443` or a tunnel URL.
 - Stop the broker before saving network changes; they take effect on the next start.
 
 The app intentionally does not display generated client secrets; use `bw-broker show-client` in a trusted terminal when you need to provision a remote client.
+
+The generated development TLS certificate is self-signed. Remote test clients must either trust it or skip certificate verification for local testing, for example `curl -k https://<public-url>/health`.
 
 ## Remote exposure
 

@@ -18,6 +18,12 @@ struct BWBrokerApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            BrokerController.shared.startBrokerIfEnabled()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         BrokerController.shared.stopBroker()
     }
@@ -42,11 +48,20 @@ final class BrokerController: ObservableObject {
     @Published var bindHost: String = "127.0.0.1"
     @Published var bindPort: String = "27443"
     @Published var publicURL: String = "https://127.0.0.1:27443"
+    @Published var startAtLaunch: Bool = true {
+        didSet {
+            UserDefaults.standard.set(startAtLaunch, forKey: Self.startAtLaunchKey)
+        }
+    }
 
+    private static let startAtLaunchKey = "startAtLaunch"
     let homeURL: URL
     private var brokerProcess: Process?
 
     private init() {
+        if UserDefaults.standard.object(forKey: Self.startAtLaunchKey) != nil {
+            startAtLaunch = UserDefaults.standard.bool(forKey: Self.startAtLaunchKey)
+        }
         if let value = ProcessInfo.processInfo.environment["BW_BROKER_HOME"], !value.isEmpty {
             homeURL = URL(fileURLWithPath: value, isDirectory: true)
         } else {
@@ -54,6 +69,14 @@ final class BrokerController: ObservableObject {
                 .appendingPathComponent(".bw-broker", isDirectory: true)
         }
         refreshConfiguration()
+    }
+
+    func startBrokerIfEnabled() {
+        guard startAtLaunch else {
+            lastStatus = "Ready. Start at Launch is off."
+            return
+        }
+        startBroker()
     }
 
     var isRunning: Bool {
@@ -516,6 +539,10 @@ struct BrokerStatusView: View {
             Divider()
 
             HStack {
+                Toggle("Start at Launch", isOn: $controller.startAtLaunch)
+
+                Spacer()
+
                 Button(controller.isRunning ? "Stop" : "Start") {
                     controller.isRunning ? controller.stopBroker() : controller.startBroker()
                 }
