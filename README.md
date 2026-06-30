@@ -46,6 +46,32 @@ python3 examples/agent_request.py
 python3 examples/agent_request.py github_readonly_token "clone repo example/foo"
 ```
 
+## macOS app
+
+The native app is a SwiftUI menu bar app that starts and stops the Rust broker, runs bootstrap/catalog commands, opens the broker home folder, copies the configured broker URL, and shows recent command output. It embeds the `bw-broker` binary in the app bundle, so you do not need to keep a terminal running for `serve`.
+
+Build the app bundle:
+
+```bash
+scripts/build-macos-app.sh
+```
+
+Open it:
+
+```bash
+open "build/macos/BW Broker.app"
+```
+
+The first app version assumes the broker has already been initialized:
+
+```bash
+./target/release/bw-broker init --email ai-agent@example.com --server-url https://vaultwarden.example.com
+./target/release/bw-broker store-master-password
+./target/release/bw-broker login --method 0 --code <current-code>
+```
+
+After that, use the menu bar app to start/stop the broker and rebuild the catalog. The app intentionally does not display generated client secrets; use `bw-broker show-client` in a trusted terminal when you need to provision a remote client.
+
 ## Remote exposure
 
 Keep the broker on a private interface when possible. For Tailscale, bind to your Tailscale IP and set the public URL to that private HTTPS address:

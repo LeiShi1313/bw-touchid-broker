@@ -1,5 +1,12 @@
 target/
+build/
 .DS_Store
+
+# Swift Package build state.
+.build/
+.swiftpm/
+macos/BWBrokerApp/.build/
+macos/BWBrokerApp/.swiftpm/
 
 # Local broker state and generated credentials.
 .bw-broker/
