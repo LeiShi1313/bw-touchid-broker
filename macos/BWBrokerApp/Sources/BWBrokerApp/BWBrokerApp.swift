@@ -457,58 +457,63 @@ struct BrokerStatusView: View {
             }
             .font(.caption)
 
-            DisclosureGroup("Network") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                        GridRow {
-                            Text("Bind")
-                                .foregroundStyle(.secondary)
-                            HStack(spacing: 6) {
-                                TextField("127.0.0.1", text: $controller.bindHost)
-                                    .textFieldStyle(.roundedBorder)
-                                    .disabled(controller.isRunning)
-                                Text(":")
-                                    .foregroundStyle(.secondary)
-                                TextField("27443", text: $controller.bindPort)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 72)
-                                    .disabled(controller.isRunning)
-                            }
-                        }
-                        GridRow {
-                            Text("Public URL")
-                                .foregroundStyle(.secondary)
-                            TextField("https://host:27443", text: $controller.publicURL)
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Network")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                    GridRow {
+                        Text("Bind")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            TextField("127.0.0.1", text: $controller.bindHost)
                                 .textFieldStyle(.roundedBorder)
+                                .disabled(controller.isRunning)
+                            Text(":")
+                                .foregroundStyle(.secondary)
+                            TextField("27443", text: $controller.bindPort)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 72)
                                 .disabled(controller.isRunning)
                         }
                     }
-
-                    HStack {
-                        Button("Localhost") {
-                            controller.useLocalhostBinding()
-                        }
-                        .disabled(controller.isRunning)
-
-                        Button("0.0.0.0") {
-                            controller.useAllInterfacesBinding()
-                        }
-                        .disabled(controller.isRunning)
-
-                        Spacer()
-
-                        Button("Save") {
-                            controller.saveNetworkSettings()
-                        }
-                        .disabled(controller.isRunning)
+                    GridRow {
+                        Text("Public URL")
+                            .foregroundStyle(.secondary)
+                        TextField("https://host:27443", text: $controller.publicURL)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(controller.isRunning)
                     }
-
-                    Text(controller.isRunning ? "Stop the broker before changing bind settings." : "Use 0.0.0.0 only behind a trusted network, VPN, tunnel, or firewall.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(.top, 4)
+
+                HStack {
+                    Button("Localhost") {
+                        controller.useLocalhostBinding()
+                    }
+                    .disabled(controller.isRunning)
+
+                    Button("0.0.0.0") {
+                        controller.useAllInterfacesBinding()
+                    }
+                    .disabled(controller.isRunning)
+
+                    Spacer()
+
+                    Button("Save") {
+                        controller.saveNetworkSettings()
+                    }
+                    .disabled(controller.isRunning)
+                }
+
+                Text(controller.isRunning ? "Stop the broker before changing bind settings." : "Use 0.0.0.0 only behind a trusted network, VPN, tunnel, or firewall.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+
+            Divider()
 
             HStack {
                 Button(controller.isRunning ? "Stop" : "Start") {
