@@ -70,7 +70,13 @@ The first app version assumes the broker has already been initialized:
 ./target/release/bw-broker login --method 0 --code <current-code>
 ```
 
-After that, use the menu bar app to start/stop the broker and rebuild the catalog. The app intentionally does not display generated client secrets; use `bw-broker show-client` in a trusted terminal when you need to provision a remote client.
+After that, use the menu bar app to start/stop the broker and rebuild the catalog. The Network section edits the broker bind host, port, and public URL:
+
+- Bind host is where the broker listens, such as `127.0.0.1`, a Tailscale IP, or `0.0.0.0`.
+- Public URL is what the remote agent calls, such as `https://100.x.y.z:27443` or a tunnel URL.
+- Stop the broker before saving network changes; they take effect on the next start.
+
+The app intentionally does not display generated client secrets; use `bw-broker show-client` in a trusted terminal when you need to provision a remote client.
 
 ## Remote exposure
 

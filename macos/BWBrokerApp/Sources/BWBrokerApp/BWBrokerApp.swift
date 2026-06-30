@@ -39,6 +39,9 @@ final class BrokerController: ObservableObject {
     @Published private(set) var catalogSummary: String = "Catalog not found"
     @Published private(set) var lastStatus: String = "Ready"
     @Published private(set) var output: String = ""
+    @Published var bindHost: String = "127.0.0.1"
+    @Published var bindPort: String = "27443"
+    @Published var publicURL: String = "https://127.0.0.1:27443"
 
     let homeURL: URL
     private var brokerProcess: Process?
@@ -71,12 +74,68 @@ final class BrokerController: ObservableObject {
     }
 
     func refreshConfiguration() {
-        brokerURL = readBrokerURL() ?? "Not configured"
+        loadNetworkSettings()
         catalogSummary = readCatalogSummary()
         if let process = brokerProcess, process.isRunning {
             state = .running
         } else if state != .failed {
             state = .stopped
+        }
+    }
+
+    func saveNetworkSettings() {
+        guard !isRunning else {
+            lastStatus = "Stop the broker before changing bind settings."
+            return
+        }
+        guard !bindHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            lastStatus = "Bind host is required."
+            return
+        }
+        guard let port = UInt16(bindPort.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            lastStatus = "Port must be between 0 and 65535."
+            return
+        }
+        guard let url = URL(string: publicURL), let scheme = url.scheme, ["https", "http"].contains(scheme) else {
+            lastStatus = "Public URL must start with https:// or http://."
+            return
+        }
+
+        let configURL = homeURL.appendingPathComponent("config.json")
+        do {
+            let data = try Data(contentsOf: configURL)
+            guard var json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                lastStatus = "Config file is not a JSON object."
+                return
+            }
+            var server = json["server"] as? [String: Any] ?? [:]
+            server["host"] = bindHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            server["port"] = Int(port)
+            server["public_url"] = publicURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            json["server"] = server
+
+            let updated = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+            try (updated + Data("\n".utf8)).write(to: configURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+
+            loadNetworkSettings()
+            lastStatus = "Saved network settings. Start the broker to use them."
+        } catch {
+            lastStatus = "Failed to save network settings: \(error.localizedDescription)"
+        }
+    }
+
+    func useLocalhostBinding() {
+        bindHost = "127.0.0.1"
+        bindPort = bindPort.isEmpty ? "27443" : bindPort
+        publicURL = "https://127.0.0.1:\(bindPort)"
+    }
+
+    func useAllInterfacesBinding() {
+        bindHost = "0.0.0.0"
+        bindPort = bindPort.isEmpty ? "27443" : bindPort
+        if publicURL.contains("127.0.0.1") || publicURL.contains("0.0.0.0") {
+            publicURL = "https://<your-lan-or-tailscale-ip>:\(bindPort)"
         }
     }
 
@@ -244,6 +303,21 @@ final class BrokerController: ObservableObject {
         return server["public_url"] as? String
     }
 
+    private func loadNetworkSettings() {
+        guard let server = readConfigSection("server") else {
+            brokerURL = "Not configured"
+            return
+        }
+        bindHost = server["host"] as? String ?? "127.0.0.1"
+        if let port = server["port"] as? Int {
+            bindPort = "\(port)"
+        } else {
+            bindPort = "27443"
+        }
+        publicURL = server["public_url"] as? String ?? "https://\(bindHost):\(bindPort)"
+        brokerURL = publicURL
+    }
+
     private func readCatalogSummary() -> String {
         let catalogURL = homeURL.appendingPathComponent("catalog.json")
         guard
@@ -382,6 +456,59 @@ struct BrokerStatusView: View {
                 }
             }
             .font(.caption)
+
+            DisclosureGroup("Network") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                        GridRow {
+                            Text("Bind")
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                TextField("127.0.0.1", text: $controller.bindHost)
+                                    .textFieldStyle(.roundedBorder)
+                                    .disabled(controller.isRunning)
+                                Text(":")
+                                    .foregroundStyle(.secondary)
+                                TextField("27443", text: $controller.bindPort)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 72)
+                                    .disabled(controller.isRunning)
+                            }
+                        }
+                        GridRow {
+                            Text("Public URL")
+                                .foregroundStyle(.secondary)
+                            TextField("https://host:27443", text: $controller.publicURL)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(controller.isRunning)
+                        }
+                    }
+
+                    HStack {
+                        Button("Localhost") {
+                            controller.useLocalhostBinding()
+                        }
+                        .disabled(controller.isRunning)
+
+                        Button("0.0.0.0") {
+                            controller.useAllInterfacesBinding()
+                        }
+                        .disabled(controller.isRunning)
+
+                        Spacer()
+
+                        Button("Save") {
+                            controller.saveNetworkSettings()
+                        }
+                        .disabled(controller.isRunning)
+                    }
+
+                    Text(controller.isRunning ? "Stop the broker before changing bind settings." : "Use 0.0.0.0 only behind a trusted network, VPN, tunnel, or firewall.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
 
             HStack {
                 Button(controller.isRunning ? "Stop" : "Start") {
