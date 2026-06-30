@@ -10,7 +10,8 @@ use crate::bw::{BitwardenCli, LoginOptions};
 use crate::catalog::{build_catalog, empty_catalog, save_catalog};
 use crate::certs::ensure_self_signed_cert;
 use crate::config::{
-    catalog_path, config_path, default_config, default_home, expand_path, load_config, save_config,
+    catalog_path, config_path, default_config, default_home, expand_path, generate_client_secret,
+    load_config, save_config, ClientApprovalMode, ClientConfig,
 };
 use crate::keychain::{
     build_helper, delete_master_password, has_master_password, read_master_password, self_test,
@@ -127,6 +128,30 @@ pub enum Command {
     #[command(about = "Print remote client broker URL/id/secret.")]
     ShowClient {
         #[arg(long, default_value = "remote-agent")]
+        client_id: String,
+    },
+    #[command(about = "List configured broker clients without printing client secrets.")]
+    ListClients,
+    #[command(about = "Add a signed-request client and print its generated secret once.")]
+    AddClient {
+        #[arg(long)]
+        client_id: String,
+        #[arg(
+            long,
+            help = "Allowed secret id. Repeatable. Defaults to all catalog secrets."
+        )]
+        allowed_secret: Vec<String>,
+        #[arg(long, help = "Skip per-request approval prompts for this client.")]
+        trusted: bool,
+    },
+    #[command(about = "Skip per-request approval prompts for an existing client.")]
+    TrustClient {
+        #[arg(long)]
+        client_id: String,
+    },
+    #[command(about = "Require per-request approval prompts for an existing client.")]
+    UntrustClient {
+        #[arg(long)]
         client_id: String,
     },
     #[command(about = "Generate signed request headers for testing or agent integration.")]
@@ -246,6 +271,18 @@ pub async fn run_with_args(args: Args) -> Result<()> {
         ),
         Command::Serve => serve(&home).await,
         Command::ShowClient { client_id } => show_client(&home, &client_id),
+        Command::ListClients => list_clients(&home),
+        Command::AddClient {
+            client_id,
+            allowed_secret,
+            trusted,
+        } => add_client(&home, &client_id, allowed_secret, trusted),
+        Command::TrustClient { client_id } => {
+            set_client_approval(&home, &client_id, ClientApprovalMode::Trusted)
+        }
+        Command::UntrustClient { client_id } => {
+            set_client_approval(&home, &client_id, ClientApprovalMode::Prompt)
+        }
         Command::SignRequest {
             client_id,
             client_secret,
@@ -466,8 +503,93 @@ fn show_client(home: &std::path::Path, client_id: &str) -> Result<()> {
             "broker_url": config.server.public_url,
             "client_id": client.id,
             "client_secret": client.secret,
+            "approval": &client.approval,
+            "allowed_secrets": client.allowed_secrets,
         }))?
     );
+    Ok(())
+}
+
+fn list_clients(home: &std::path::Path) -> Result<()> {
+    let config = load_config(home)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "broker_url": config.server.public_url,
+            "clients": config.signing.clients.iter().map(|client| {
+                serde_json::json!({
+                    "id": client.id,
+                    "secret": "<redacted>",
+                    "approval": &client.approval,
+                    "allowed_secrets": client.allowed_secrets,
+                })
+            }).collect::<Vec<_>>()
+        }))?
+    );
+    Ok(())
+}
+
+fn add_client(
+    home: &std::path::Path,
+    client_id: &str,
+    allowed_secret: Vec<String>,
+    trusted: bool,
+) -> Result<()> {
+    let mut config = load_config(home)?;
+    if config
+        .signing
+        .clients
+        .iter()
+        .any(|client| client.id == client_id)
+    {
+        return Err(anyhow!("client already exists: {client_id}"));
+    }
+    let secret = generate_client_secret();
+    let approval = if trusted {
+        ClientApprovalMode::Trusted
+    } else {
+        ClientApprovalMode::Prompt
+    };
+    let allowed_secrets = if allowed_secret.is_empty() {
+        vec!["*".to_string()]
+    } else {
+        allowed_secret
+    };
+    config.signing.clients.push(ClientConfig {
+        id: client_id.to_string(),
+        secret: secret.clone(),
+        approval,
+        allowed_secrets: allowed_secrets.clone(),
+    });
+    save_config(home, &config)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "broker_url": config.server.public_url,
+            "client_id": client_id,
+            "client_secret": secret,
+            "approval": &config.signing.clients.last().expect("client was just added").approval,
+            "allowed_secrets": allowed_secrets,
+        }))?
+    );
+    Ok(())
+}
+
+fn set_client_approval(
+    home: &std::path::Path,
+    client_id: &str,
+    approval: ClientApprovalMode,
+) -> Result<()> {
+    let mut config = load_config(home)?;
+    let client = config
+        .signing
+        .clients
+        .iter_mut()
+        .find(|client| client.id == client_id)
+        .ok_or_else(|| anyhow!("unknown client id: {client_id}"))?;
+    client.approval = approval;
+    save_config(home, &config)?;
+    println!("Updated client approval mode: {client_id}");
     Ok(())
 }
 

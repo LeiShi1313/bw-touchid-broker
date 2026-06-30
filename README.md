@@ -82,6 +82,24 @@ The app intentionally does not display generated client secrets; use `bw-broker 
 
 The generated development TLS certificate is self-signed. Remote test clients must either trust it or skip certificate verification for local testing, for example `curl -k https://<public-url>/health`.
 
+### Clients and approval
+
+Each remote agent is a signing client with its own HMAC secret, allowed secret ids, and approval mode:
+
+- `prompt` requires local approval for catalog entries that require approval.
+- `trusted` skips the per-request approval dialog for that client.
+
+Trust does not expand access. A trusted client still needs a valid HMAC signature, fresh nonce, valid timestamp, catalog permission, and field permission. Use it for a client/runtime you are willing to let request its allowed catalog entries without another click.
+
+The menu bar app can add a client and shows the generated client secret once. Existing client secrets are not displayed in the app. CLI equivalents:
+
+```bash
+./target/release/bw-broker list-clients
+./target/release/bw-broker add-client --client-id ci-agent --allowed-secret github_readonly_token --trusted
+./target/release/bw-broker trust-client --client-id ci-agent
+./target/release/bw-broker untrust-client --client-id ci-agent
+```
+
 ## Remote exposure
 
 Keep the broker on a private interface when possible. For Tailscale, bind to your Tailscale IP and set the public URL to that private HTTPS address:

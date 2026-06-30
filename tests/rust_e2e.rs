@@ -2,8 +2,8 @@ use bw_touchid_broker::catalog::{save_catalog, Catalog, CatalogEntry};
 use bw_touchid_broker::certs::ensure_self_signed_cert;
 use bw_touchid_broker::cli::run_from;
 use bw_touchid_broker::config::{
-    save_config, ApprovalConfig, AuditConfig, BitwardenConfig, ClientConfig, Config,
-    KeychainConfig, ServerConfig, SigningConfig,
+    save_config, ApprovalConfig, AuditConfig, BitwardenConfig, ClientApprovalMode, ClientConfig,
+    Config, KeychainConfig, ServerConfig, SigningConfig,
 };
 use bw_touchid_broker::server::serve_config;
 use bw_touchid_broker::signing::signed_headers_json;
@@ -96,6 +96,74 @@ async fn signed_secret_request_unlocks_and_fetches_one_item() {
     assert!(fs::read_to_string(fixture.home().join("audit.log"))
         .unwrap()
         .contains("\"event\":\"secret_released\""));
+}
+
+#[tokio::test]
+async fn trusted_client_skips_per_request_approval() {
+    let fixture = Fixture::new();
+    let port = free_port();
+    let mut config = fixture.config(port, false);
+    config.approval.confirm_dialog = true;
+    config.signing.clients[0].approval = ClientApprovalMode::Trusted;
+    let catalog = Catalog {
+        version: 1,
+        secrets: BTreeMap::from([(
+            "github_token".to_string(),
+            CatalogEntry {
+                item_id: "item-1".to_string(),
+                kind: "login".to_string(),
+                description: "GitHub token".to_string(),
+                return_fields: vec!["password".to_string()],
+                approval_required: true,
+                ttl_seconds: 60,
+                allowed_clients: vec!["remote-agent".to_string()],
+                metadata: json!({}),
+            },
+        )]),
+    };
+    save_config(fixture.home(), &config).unwrap();
+    save_catalog(fixture.home(), &catalog).unwrap();
+
+    let server_home = fixture.home().to_path_buf();
+    let server_config = config.clone();
+    let handle = tokio::spawn(async move {
+        let _ = serve_config(server_home, server_config).await;
+    });
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    wait_for_health(&client, port).await;
+
+    let body = serde_json::to_vec(&json!({
+        "secret_id": "github_token",
+        "purpose": "trusted client unit test",
+        "run_id": "test-run",
+        "fields": ["password"]
+    }))
+    .unwrap();
+    let signed = signed_headers_json(
+        "remote-agent",
+        "client-secret",
+        "POST",
+        "/v1/secret-requests",
+        &body,
+        "nonce-trusted",
+    )
+    .unwrap();
+    let mut request = client
+        .post(format!("https://127.0.0.1:{port}/v1/secret-requests"))
+        .header("content-type", "application/json")
+        .body(body);
+    for (key, value) in signed.as_object().unwrap() {
+        request = request.header(key, value.as_str().unwrap());
+    }
+    let response = request.send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: Value = response.json().await.unwrap();
+    assert_eq!(payload["fields"], json!({"password": "token-value"}));
+
+    handle.abort();
 }
 
 #[tokio::test]
@@ -226,6 +294,40 @@ async fn login_command_requires_method_and_code_pair() {
     assert!(!fixture.call_log().exists());
 }
 
+#[tokio::test]
+async fn add_client_command_generates_secret_and_trust_policy() {
+    let fixture = Fixture::new();
+    let config = fixture.config(27443, true);
+    save_config(fixture.home(), &config).unwrap();
+
+    run_from([
+        "bw-broker",
+        "--home",
+        fixture.home().to_str().unwrap(),
+        "add-client",
+        "--client-id",
+        "ci-agent",
+        "--allowed-secret",
+        "github_token",
+        "--trusted",
+    ])
+    .await
+    .unwrap();
+
+    let updated: Config =
+        serde_json::from_str(&fs::read_to_string(fixture.home().join("config.json")).unwrap())
+            .unwrap();
+    let client = updated
+        .signing
+        .clients
+        .iter()
+        .find(|client| client.id == "ci-agent")
+        .unwrap();
+    assert_eq!(client.approval, ClientApprovalMode::Trusted);
+    assert_eq!(client.allowed_secrets, vec!["github_token".to_string()]);
+    assert!(client.secret.len() >= 32);
+}
+
 struct Fixture {
     temp: TempDir,
     fake_bw: PathBuf,
@@ -296,6 +398,7 @@ impl Fixture {
                 clients: vec![ClientConfig {
                     id: "remote-agent".to_string(),
                     secret: "client-secret".to_string(),
+                    approval: ClientApprovalMode::Prompt,
                     allowed_secrets: vec!["*".to_string()],
                 }],
             },

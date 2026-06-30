@@ -131,7 +131,7 @@ async fn secret_request(
         None => allowed_fields,
     };
 
-    if entry.approval_required {
+    if entry.approval_required && !client.approval.is_trusted() {
         if let Err(err) = confirm_request(&state.config, &client_id, secret_id, purpose, run_id) {
             let _ = audit_event(
                 &state,

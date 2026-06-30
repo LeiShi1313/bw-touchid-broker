@@ -120,7 +120,7 @@ pub fn visible_catalog(catalog: &Catalog, client: &ClientConfig) -> Value {
             "kind": entry.kind,
             "description": entry.description,
             "return_fields": entry.return_fields,
-            "approval_required": entry.approval_required,
+            "approval_required": entry.approval_required && !client.approval.is_trusted(),
             "ttl_seconds": entry.ttl_seconds,
         }));
     }

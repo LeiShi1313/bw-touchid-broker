@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 import SwiftUI
 
 @main
@@ -43,11 +44,16 @@ final class BrokerController: ObservableObject {
     @Published private(set) var state: BrokerState = .stopped
     @Published private(set) var brokerURL: String = "Not configured"
     @Published private(set) var catalogSummary: String = "Catalog not found"
+    @Published private(set) var clients: [BrokerClient] = []
     @Published private(set) var lastStatus: String = "Ready"
     @Published private(set) var output: String = ""
     @Published var bindHost: String = "127.0.0.1"
     @Published var bindPort: String = "27443"
     @Published var publicURL: String = "https://127.0.0.1:27443"
+    @Published var newClientID: String = ""
+    @Published var newClientAllowedSecrets: String = "*"
+    @Published var newClientTrusted: Bool = false
+    @Published private(set) var newClientConfigJSON: String = ""
     @Published var startAtLaunch: Bool = true {
         didSet {
             UserDefaults.standard.set(startAtLaunch, forKey: Self.startAtLaunchKey)
@@ -99,6 +105,7 @@ final class BrokerController: ObservableObject {
     func refreshConfiguration() {
         loadNetworkSettings()
         catalogSummary = readCatalogSummary()
+        clients = readClients()
         if let process = brokerProcess, process.isRunning {
             state = .running
         } else if state != .failed {
@@ -126,26 +133,110 @@ final class BrokerController: ObservableObject {
 
         let configURL = homeURL.appendingPathComponent("config.json")
         do {
-            let data = try Data(contentsOf: configURL)
-            guard var json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                lastStatus = "Config file is not a JSON object."
-                return
-            }
+            var json = try readConfigJSON()
             var server = json["server"] as? [String: Any] ?? [:]
             server["host"] = bindHost.trimmingCharacters(in: .whitespacesAndNewlines)
             server["port"] = Int(port)
             server["public_url"] = publicURL.trimmingCharacters(in: .whitespacesAndNewlines)
             json["server"] = server
 
-            let updated = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
-            try (updated + Data("\n".utf8)).write(to: configURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            try writeConfigJSON(json, to: configURL)
 
             loadNetworkSettings()
             lastStatus = "Saved network settings. Start the broker to use them."
         } catch {
             lastStatus = "Failed to save network settings: \(error.localizedDescription)"
         }
+    }
+
+    func addClient() {
+        let clientID = newClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clientID.isEmpty else {
+            lastStatus = "Client id is required."
+            return
+        }
+        let allowedSecrets = parseAllowedSecrets(newClientAllowedSecrets)
+        do {
+            let secret = try generateClientSecret()
+            var config = try readConfigJSON()
+            var signing = config["signing"] as? [String: Any] ?? [:]
+            var existingClients = signing["clients"] as? [[String: Any]] ?? []
+            if existingClients.contains(where: { ($0["id"] as? String) == clientID }) {
+                lastStatus = "Client already exists: \(clientID)"
+                return
+            }
+            let approval = newClientTrusted ? "trusted" : "prompt"
+            let newClient: [String: Any] = [
+                "id": clientID,
+                "secret": secret,
+                "approval": approval,
+                "allowed_secrets": allowedSecrets,
+            ]
+            existingClients.append(newClient)
+            signing["clients"] = existingClients
+            config["signing"] = signing
+            try writeConfigJSON(config, to: homeURL.appendingPathComponent("config.json"))
+
+            let clientConfig = [
+                "broker_url": publicURL,
+                "client_id": clientID,
+                "client_secret": secret,
+                "approval": approval,
+                "allowed_secrets": allowedSecrets,
+            ] as [String: Any]
+            let clientConfigData = try JSONSerialization.data(
+                withJSONObject: clientConfig,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            newClientConfigJSON = String(data: clientConfigData, encoding: .utf8) ?? ""
+            newClientID = ""
+            newClientAllowedSecrets = "*"
+            newClientTrusted = false
+            clients = readClients()
+            restartBrokerAfterConfigChange("Added client \(clientID).")
+        } catch {
+            lastStatus = "Failed to add client: \(error.localizedDescription)"
+        }
+    }
+
+    func setClientTrusted(_ clientID: String, trusted: Bool) {
+        do {
+            var config = try readConfigJSON()
+            guard var signing = config["signing"] as? [String: Any],
+                  var existingClients = signing["clients"] as? [[String: Any]]
+            else {
+                lastStatus = "Config has no signing clients."
+                return
+            }
+            guard let index = existingClients.firstIndex(where: { ($0["id"] as? String) == clientID }) else {
+                lastStatus = "Unknown client: \(clientID)"
+                return
+            }
+            existingClients[index]["approval"] = trusted ? "trusted" : "prompt"
+            signing["clients"] = existingClients
+            config["signing"] = signing
+            try writeConfigJSON(config, to: homeURL.appendingPathComponent("config.json"))
+            clients = readClients()
+            restartBrokerAfterConfigChange(
+                trusted ? "Trusted client \(clientID)." : "Require approval for \(clientID)."
+            )
+        } catch {
+            lastStatus = "Failed to update client: \(error.localizedDescription)"
+        }
+    }
+
+    func copyNewClientConfig() {
+        guard !newClientConfigJSON.isEmpty else {
+            lastStatus = "No new client config to copy."
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(newClientConfigJSON, forType: .string)
+        lastStatus = "Copied new client config."
+    }
+
+    func clearNewClientConfig() {
+        newClientConfigJSON = ""
     }
 
     func useLocalhostBinding() {
@@ -341,6 +432,75 @@ final class BrokerController: ObservableObject {
         brokerURL = publicURL
     }
 
+    private func readClients() -> [BrokerClient] {
+        guard let signing = readConfigSection("signing"),
+              let rawClients = signing["clients"] as? [[String: Any]]
+        else {
+            return []
+        }
+        return rawClients.compactMap { rawClient in
+            guard let id = rawClient["id"] as? String else {
+                return nil
+            }
+            let approval = rawClient["approval"] as? String ?? "prompt"
+            let allowedSecrets = rawClient["allowed_secrets"] as? [String] ?? []
+            return BrokerClient(
+                id: id,
+                trusted: approval == "trusted",
+                allowedSecrets: allowedSecrets.isEmpty ? ["*"] : allowedSecrets
+            )
+        }
+        .sorted { $0.id < $1.id }
+    }
+
+    private func readConfigJSON() throws -> [String: Any] {
+        let configURL = homeURL.appendingPathComponent("config.json")
+        let data = try Data(contentsOf: configURL)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BrokerAppError.invalidConfig
+        }
+        return json
+    }
+
+    private func writeConfigJSON(_ json: [String: Any], to configURL: URL) throws {
+        let updated = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+        try (updated + Data("\n".utf8)).write(to: configURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+    }
+
+    private func parseAllowedSecrets(_ value: String) -> [String] {
+        let parsed = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return parsed.isEmpty ? ["*"] : parsed
+    }
+
+    private func generateClientSecret() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        if status != errSecSuccess {
+            throw BrokerAppError.randomFailure(status)
+        }
+        return Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func restartBrokerAfterConfigChange(_ message: String) {
+        let shouldRestart = isRunning
+        if shouldRestart {
+            stopBroker()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.startBroker()
+                self.lastStatus = "\(message) Restarted broker."
+            }
+        } else {
+            lastStatus = "\(message) Start the broker to use it."
+        }
+    }
+
     private func readCatalogSummary() -> String {
         let catalogURL = homeURL.appendingPathComponent("catalog.json")
         guard
@@ -390,6 +550,26 @@ final class BrokerController: ObservableObject {
                 .appendingPathComponent("target/release/bw-broker"),
         ]
         return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+    }
+}
+
+struct BrokerClient: Identifiable, Equatable {
+    let id: String
+    let trusted: Bool
+    let allowedSecrets: [String]
+}
+
+enum BrokerAppError: LocalizedError {
+    case invalidConfig
+    case randomFailure(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidConfig:
+            "Config file is not a JSON object."
+        case .randomFailure(let status):
+            "Secure random generation failed with status \(status)."
+        }
     }
 }
 
@@ -568,6 +748,83 @@ struct BrokerStatusView: View {
 
                 Button("Open Home") {
                     controller.openBrokerHome()
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Clients")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if controller.clients.isEmpty {
+                    Text("No clients configured.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(controller.clients) { client in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(client.id)
+                                    .font(.caption)
+                                    .textSelection(.enabled)
+                                Text("\(client.trusted ? "trusted" : "prompts") · \(client.allowedSecrets.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                            Button(client.trusted ? "Require Approval" : "Trust") {
+                                controller.setClientTrusted(client.id, trusted: !client.trusted)
+                            }
+                        }
+                    }
+                }
+
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                    GridRow {
+                        Text("New")
+                            .foregroundStyle(.secondary)
+                        TextField("client-id", text: $controller.newClientID)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    GridRow {
+                        Text("Allowed")
+                            .foregroundStyle(.secondary)
+                        TextField("* or secret_a,secret_b", text: $controller.newClientAllowedSecrets)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                HStack {
+                    Toggle("Trusted", isOn: $controller.newClientTrusted)
+                    Spacer()
+                    Button("Add Client") {
+                        controller.addClient()
+                    }
+                }
+
+                if !controller.newClientConfigJSON.isEmpty {
+                    Text("New client secret is shown once.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        Text(controller.newClientConfigJSON)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 90)
+                    HStack {
+                        Button("Copy New Config") {
+                            controller.copyNewClientConfig()
+                        }
+                        Button("Hide") {
+                            controller.clearNewClientConfig()
+                        }
+                    }
                 }
             }
 

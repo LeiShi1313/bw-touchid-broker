@@ -75,7 +75,23 @@ pub struct ClientConfig {
     pub id: String,
     pub secret: String,
     #[serde(default)]
+    pub approval: ClientApprovalMode,
+    #[serde(default)]
     pub allowed_secrets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientApprovalMode {
+    #[default]
+    Prompt,
+    Trusted,
+}
+
+impl ClientApprovalMode {
+    pub fn is_trusted(&self) -> bool {
+        matches!(self, Self::Trusted)
+    }
 }
 
 fn default_true() -> bool {
@@ -143,9 +159,7 @@ pub fn default_config(
     port: u16,
     public_url: Option<String>,
 ) -> Config {
-    let mut secret_bytes = [0_u8; 32];
-    rand::thread_rng().fill_bytes(&mut secret_bytes);
-    let client_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
+    let client_secret = generate_client_secret();
     let account = if email.is_empty() {
         "ai-agent@example.com".to_string()
     } else {
@@ -187,10 +201,17 @@ pub fn default_config(
             clients: vec![ClientConfig {
                 id: client_id,
                 secret: client_secret,
+                approval: ClientApprovalMode::Prompt,
                 allowed_secrets: vec!["*".to_string()],
             }],
         },
     }
+}
+
+pub fn generate_client_secret() -> String {
+    let mut secret_bytes = [0_u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret_bytes);
+    URL_SAFE_NO_PAD.encode(secret_bytes)
 }
 
 pub fn load_config(home: &Path) -> Result<Config> {
